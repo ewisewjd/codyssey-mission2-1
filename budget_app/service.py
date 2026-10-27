@@ -1,5 +1,6 @@
 """Business rules for transactions, categories, budgets and CSV."""
 import csv
+import calendar
 from collections import Counter, defaultdict
 from datetime import date
 from pathlib import Path
@@ -170,7 +171,8 @@ class BudgetService:
             raise ValueError("export에는 --month 또는 --from과 --to를 함께 지정해야 합니다.")
         if month:
             month = validate_month(month)
-            records = self.filtered(start=f"{month}-01", end=f"{month}-31")
+            last_day = calendar.monthrange(int(month[:4]), int(month[5:7]))[1]
+            records = self.filtered(start=f"{month}-01", end=f"{month}-{last_day:02d}")
         else:
             records = self.filtered(start=start, end=end)
         count = 0
