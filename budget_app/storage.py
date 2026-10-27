@@ -1,0 +1,106 @@
+"""JSONL persistence. Read operations iterate line-by-line."""
+import json
+import os
+import tempfile
+from pathlib import Path
+from typing import Any, Iterator
+
+from .models import Transaction
+
+
+DEFAULT_CATEGORIES = ["food", "transport", "rent", "salary", "shopping", "health", "etc"]
+
+
+class JsonlStore:
+    def __init__(self, data_dir: str = "data") -> None:
+        self.data_dir = Path(data_dir)
+        self.transactions_path = self.data_dir / "transactions.jsonl"
+        self.categories_path = self.data_dir / "categories.jsonl"
+        self.budgets_path = self.data_dir / "budgets.jsonl"
+        self.ensure_files()
+
+    def ensure_files(self) -> None:
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        for path in (self.transactions_path, self.categories_path, self.budgets_path):
+            if not path.exists():
+                path.touch()
+        if self.categories_path.stat().st_size == 0:
+            for name in DEFAULT_CATEGORIES:
+                self.append_json(self.categories_path, {"name": name})
+
+    @staticmethod
+    def append_json(path: Path, data: dict[str, Any]) -> None:
+        with path.open("a", encoding="utf-8") as file:
+            file.write(json.dumps(data, ensure_ascii=False) + "\n")
+
+    @staticmethod
+    def iter_json(path: Path) -> Iterator[dict[str, Any]]:
+        if not path.exists():
+            return
+        with path.open("r", encoding="utf-8") as file:
+            for line_number, line in enumerate(file, start=1):
+                if not line.strip():
+                    continue
+                try:
+                    yield json.loads(line)
+                except json.JSONDecodeError as exc:
+                    raise ValueError(f"{path}의 {line_number}번째 줄이 올바른 JSON이 아닙니다. 파일을 확인하세요.") from exc
+
+    def iter_transactions(self) -> Iterator[Transaction]:
+        for row in self.iter_json(self.transactions_path):
+            try:
+                yield Transaction.from_dict(row)
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ValueError(f"거래 데이터 형식이 잘못되었습니다: {exc}") from exc
+
+    def categories(self) -> list[str]:
+        return [str(row["name"]) for row in self.iter_json(self.categories_path) if row.get("name")]
+
+    def budgets(self) -> dict[str, int]:
+        result: dict[str, int] = {}
+        for row in self.iter_json(self.budgets_path):
+            if row.get("month") is not None:
+                result[str(row["month"])] = int(row["amount"])
+        return result
+
+    def next_transaction_id(self) -> str:
+        highest = 0
+        for transaction in self.iter_transactions():
+            try:
+                highest = max(highest, int(transaction.id.removeprefix("TX-")))
+            except ValueError:
+                continue
+        return f"TX-{highest + 1:06d}"
+
+    def add_transaction(self, transaction: Transaction) -> None:
+        self.append_json(self.transactions_path, transaction.to_dict())
+
+    def replace_transactions(self, transactions: Iterator[Transaction]) -> None:
+        self._atomic_write(self.transactions_path, (item.to_dict() for item in transactions))
+
+    def add_category(self, name: str) -> None:
+        self.append_json(self.categories_path, {"name": name})
+
+    def replace_categories(self, categories: list[str]) -> None:
+        self._atomic_write(self.categories_path, ({"name": name} for name in categories))
+
+    def set_budget(self, month: str, amount: int) -> None:
+        budgets = self.budgets()
+        budgets[month] = amount
+        self._atomic_write(self.budgets_path, ({"month": m, "amount": a} for m, a in sorted(budgets.items())))
+
+    @staticmethod
+    def _atomic_write(path: Path, rows: Iterator[dict[str, Any]]) -> None:
+        temp_name = None
+        try:
+            with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as file:
+                temp_name = file.name
+                for row in rows:
+                    file.write(json.dumps(row, ensure_ascii=False) + "\n")
+                file.flush()
+                os.fsync(file.fileno())
+            os.replace(temp_name, path)
+        except OSError:
+            if temp_name and os.path.exists(temp_name):
+                os.unlink(temp_name)
+            raise
