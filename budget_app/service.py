@@ -1,0 +1,184 @@
+"""Business rules for transactions, categories, budgets and CSV."""
+import csv
+from collections import Counter, defaultdict
+from datetime import date
+from pathlib import Path
+from typing import Iterator
+
+from .models import Transaction, validate_date, validate_month, validate_transaction_fields
+from .storage import JsonlStore
+
+
+class BudgetService:
+    def __init__(self, store: JsonlStore) -> None:
+        self.store = store
+
+    def add(self, transaction_type: str, transaction_date: str, amount: int, category: str,
+            memo: str = "", tags: list[str] | None = None) -> Transaction:
+        validate_transaction_fields(transaction_type, transaction_date, amount, category)
+        if category not in self.store.categories():
+            raise ValueError(f"등록되지 않은 카테고리입니다: {category}. 'category add'로 먼저 등록하세요.")
+        transaction = Transaction(
+            id=self.store.next_transaction_id(), type=transaction_type, date=transaction_date,
+            amount=amount, category=category, memo=memo.strip(), tags=tags or []
+        )
+        self.store.add_transaction(transaction)
+        return transaction
+
+    def filtered(self, start: str | None = None, end: str | None = None,
+                 category: str | None = None, transaction_type: str | None = None,
+                 query: str | None = None, tag: str | None = None) -> Iterator[Transaction]:
+        if start:
+            validate_date(start)
+        if end:
+            validate_date(end)
+        if start and end and start > end:
+            raise ValueError("--from 날짜는 --to 날짜보다 늦을 수 없습니다.")
+        if transaction_type and transaction_type not in {"income", "expense"}:
+            raise ValueError("--type은 income 또는 expense여야 합니다.")
+        if category and category not in self.store.categories():
+            raise ValueError(f"등록되지 않은 카테고리입니다: {category}")
+        for item in self.store.iter_transactions():
+            if start and item.date < start:
+                continue
+            if end and item.date > end:
+                continue
+            if category and item.category != category:
+                continue
+            if transaction_type and item.type != transaction_type:
+                continue
+            if query and query.casefold() not in item.memo.casefold():
+                continue
+            if tag and tag not in item.tags:
+                continue
+            yield item
+
+    def list_transactions(self, limit: int = 20) -> list[Transaction]:
+        if limit < 1:
+            raise ValueError("--limit은 1 이상의 정수여야 합니다.")
+        return sorted(self.store.iter_transactions(), key=lambda item: (item.date, item.id), reverse=True)[:limit]
+
+    def search(self, **filters: str | None) -> list[Transaction]:
+        return sorted(self.filtered(**filters), key=lambda item: (item.date, item.id), reverse=True)
+
+    def update(self, transaction_id: str, **changes: object) -> Transaction:
+        allowed = {"date", "type", "amount", "category", "memo", "tags"}
+        if not changes or not set(changes).issubset(allowed):
+            raise ValueError("수정할 필드를 하나 이상 지정하세요: --date, --type, --amount, --category, --memo, --tags")
+        found: Transaction | None = None
+        rows: list[Transaction] = []
+        categories = self.store.categories()
+        for item in self.store.iter_transactions():
+            if item.id == transaction_id:
+                values = {
+                    "date": str(changes.get("date", item.date)),
+                    "type": str(changes.get("type", item.type)),
+                    "amount": int(changes.get("amount", item.amount)),
+                    "category": str(changes.get("category", item.category)),
+                    "memo": str(changes.get("memo", item.memo)),
+                    "tags": changes.get("tags", item.tags),
+                }
+                if not isinstance(values["tags"], list):
+                    values["tags"] = [part.strip() for part in str(values["tags"]).split(",") if part.strip()]
+                validate_transaction_fields(values["type"], values["date"], values["amount"], values["category"])
+                if values["category"] not in categories:
+                    raise ValueError(f"등록되지 않은 카테고리입니다: {values['category']}")
+                found = Transaction(id=item.id, **values)  # type: ignore[arg-type]
+                rows.append(found)
+            else:
+                rows.append(item)
+        if found is None:
+            raise ValueError(f"거래 ID를 찾을 수 없습니다: {transaction_id}")
+        self.store.replace_transactions(iter(rows))
+        return found
+
+    def delete(self, transaction_id: str) -> None:
+        rows: list[Transaction] = []
+        found = False
+        for item in self.store.iter_transactions():
+            if item.id == transaction_id:
+                found = True
+            else:
+                rows.append(item)
+        if not found:
+            raise ValueError(f"거래 ID를 찾을 수 없습니다: {transaction_id}")
+        self.store.replace_transactions(iter(rows))
+
+    def summary(self, month: str, top: int = 3) -> dict[str, object]:
+        month = validate_month(month)
+        if top < 1:
+            raise ValueError("--top은 1 이상의 정수여야 합니다.")
+        income = expense = 0
+        categories: Counter[str] = Counter()
+        count = 0
+        for item in self.store.iter_transactions():
+            if item.date.startswith(month):
+                count += 1
+                if item.type == "income":
+                    income += item.amount
+                else:
+                    expense += item.amount
+                    categories[item.category] += item.amount
+        budget = self.store.budgets().get(month)
+        return {"month": month, "count": count, "income": income, "expense": expense,
+                "balance": income - expense, "top": categories.most_common(top), "budget": budget}
+
+    def set_budget(self, month: str, amount: int) -> None:
+        month = validate_month(month)
+        if amount <= 0:
+            raise ValueError("예산은 0보다 큰 정수여야 합니다.")
+        self.store.set_budget(month, amount)
+
+    def add_category(self, name: str) -> None:
+        name = name.strip()
+        if not name:
+            raise ValueError("카테고리명을 입력하세요.")
+        if name in self.store.categories():
+            raise ValueError(f"이미 등록된 카테고리입니다: {name}")
+        self.store.add_category(name)
+
+    def remove_category(self, name: str) -> None:
+        if name not in self.store.categories():
+            raise ValueError(f"등록되지 않은 카테고리입니다: {name}")
+        if any(item.category == name for item in self.store.iter_transactions()):
+            raise ValueError(f"{name} 카테고리는 거래에서 사용 중이므로 삭제할 수 없습니다.")
+        self.store.replace_categories([item for item in self.store.categories() if item != name])
+
+    def import_csv(self, source: str) -> tuple[int, int]:
+        imported = skipped = 0
+        with Path(source).open("r", encoding="utf-8-sig", newline="") as file:
+            reader = csv.DictReader(file)
+            required = {"date", "type", "category", "amount"}
+            if not required.issubset(set(reader.fieldnames or [])):
+                raise ValueError("CSV 필수 헤더는 date,type,category,amount 입니다.")
+            for row_number, row in enumerate(reader, start=2):
+                try:
+                    amount_text = row.get("amount", "")
+                    if not amount_text or not amount_text.isdigit():
+                        raise ValueError("amount는 양수 정수여야 합니다.")
+                    tags = [part.strip() for part in (row.get("tags") or "").split(",") if part.strip()]
+                    self.add(row.get("type", ""), row.get("date", ""), int(amount_text),
+                             row.get("category", ""), row.get("memo") or "", tags)
+                    imported += 1
+                except (ValueError, TypeError):
+                    skipped += 1
+        return imported, skipped
+
+    def export_csv(self, target: str, month: str | None = None, start: str | None = None,
+                   end: str | None = None) -> int:
+        if not month and not (start and end):
+            raise ValueError("export에는 --month 또는 --from과 --to를 함께 지정해야 합니다.")
+        if month:
+            month = validate_month(month)
+            records = self.filtered(start=f"{month}-01", end=f"{month}-31")
+        else:
+            records = self.filtered(start=start, end=end)
+        count = 0
+        with Path(target).open("w", encoding="utf-8", newline="") as file:
+            writer = csv.DictWriter(file, fieldnames=["date", "type", "category", "amount", "memo", "tags"])
+            writer.writeheader()
+            for item in records:
+                writer.writerow({"date": item.date, "type": item.type, "category": item.category,
+                                 "amount": item.amount, "memo": item.memo, "tags": ",".join(item.tags)})
+                count += 1
+        return count
