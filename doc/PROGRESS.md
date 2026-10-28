@@ -4,7 +4,7 @@
 - 기준일: 2026-10-28
 - 저장소: `ewisewjd/codyssey-mission2-1`
 - 구현: 주요 필수 기능의 첫 구현본 존재
-- 테스트: 핵심 unittest 구성; 최신 변경 후 GitHub Actions 결과 확인 필요
+- 테스트: GitHub Actions 최신 실행 성공 (CSV 왕복 테스트 포함)
 - 검증 상태: 문서/코드 정적 대조 진행. 모든 CLI의 로컬 수동 시연은 미완료.
 
 ## 완료/반영
@@ -21,7 +21,7 @@
 - [x] CSV export→import 필드 보존 테스트 추가
 
 ## 남은 검증
-- [ ] 최신 GitHub Actions 결과 확인
+- [x] 최신 GitHub Actions 결과 확인 (run 40622625918 성공)
 - [ ] 모든 명령 및 하위 명령 `--help` 실행
 - [ ] 실제 대화형 add/category add 시연
 - [ ] 오류·경계·영속성 테스트(잘못된 JSONL, 경로 오류, 없는 ID, 빈 데이터)
