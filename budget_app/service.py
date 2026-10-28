@@ -1,6 +1,7 @@
 """Business rules for transactions, categories, budgets and CSV."""
 import csv
 import calendar
+import heapq
 from collections import Counter, defaultdict
 from datetime import date
 from pathlib import Path
@@ -57,7 +58,12 @@ class BudgetService:
     def list_transactions(self, limit: int = 20) -> list[Transaction]:
         if limit < 1:
             raise ValueError("--limit은 1 이상의 정수여야 합니다.")
-        return sorted(self.store.iter_transactions(), key=lambda item: (item.date, item.id), reverse=True)[:limit]
+        # nlargest iterates over the generator and retains only the newest `limit` records.
+        return heapq.nlargest(
+            limit,
+            self.store.iter_transactions(),
+            key=lambda item: (item.date, item.id),
+        )
 
     def search(self, **filters: str | None) -> list[Transaction]:
         return sorted(self.filtered(**filters), key=lambda item: (item.date, item.id), reverse=True)
