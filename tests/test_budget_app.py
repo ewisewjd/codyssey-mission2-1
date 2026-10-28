@@ -72,6 +72,16 @@ class BudgetServiceTests(unittest.TestCase):
         self.assertEqual(row["memo"], "국밥, 특")
         self.assertEqual(row["tags"], "lunch,korean")
 
+        # Import the exported file into a separate store and confirm field preservation.
+        second_store = JsonlStore(str(Path(self.temp.name) / "imported-data"))
+        second_service = BudgetService(second_store)
+        imported, skipped = second_service.import_csv(str(output))
+        self.assertEqual((imported, skipped), (1, 0))
+        imported_row = list(second_store.iter_transactions())[0]
+        self.assertEqual(imported_row.memo, "국밥, 특")
+        self.assertEqual(imported_row.tags, ["lunch", "korean"])
+        self.assertEqual(imported_row.amount, 1234)
+
     def test_all_three_data_files_exist(self):
         self.assertTrue(self.store.transactions_path.exists())
         self.assertTrue(self.store.categories_path.exists())
