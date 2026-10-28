@@ -57,7 +57,7 @@
 
 - 테스트 파일: `tests/test_budget_app.py`
 - 워크플로: `.github/workflows/tests.yml`
-- 최근 실행 결과는 [GitHub Actions](https://github.com/ewisewjd/codyssey-mission2-1/actions)에서 확인한다.
+- 최신 코드 커밋 `79b0b86a1707625aea9ff0e4e78d502431889017`의 [GitHub Actions 실행](https://github.com/ewisewjd/codyssey-mission2-1/actions/runs/40622625918)은 success로 완료됐다. unittest와 CLI 도움말 단계가 성공했다.
 - 테스트가 성공해도 테스트하지 않은 경로가 자동으로 검증되는 것은 아니다.
 
 ## 현재 판정
