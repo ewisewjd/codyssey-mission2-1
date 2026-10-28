@@ -1,10 +1,10 @@
 """Command-line interface for the budget ledger."""
 import argparse
 import sys
+from datetime import date
 from typing import Sequence
 
 from .decorators import timed
-from .models import validate_date
 from .service import BudgetService
 from .storage import JsonlStore
 
@@ -82,13 +82,13 @@ def run(args: argparse.Namespace) -> int:
     if args.command == "add":
         categories = store.categories()
         print("등록된 카테고리:", ", ".join(categories))
-        transaction_date = input("날짜(YYYY-MM-DD, 기본값 오늘): ").strip() or __import__("datetime").date.today().isoformat()
+        transaction_date = input("날짜(YYYY-MM-DD, 기본값 오늘): ").strip() or date.today().isoformat()
         transaction_type = input("타입(income/expense): ").strip()
         category_name = input("카테고리: ").strip()
         amount_text = input("금액(양수 정수): ").strip()
         memo = input("메모(선택): ").strip()
         tags_text = input("태그(쉼표로 구분, 선택): ").strip()
-        if not amount_text.isdigit():
+        if not amount_text.isdigit() or int(amount_text) <= 0:
             raise ValueError("금액은 0보다 큰 정수여야 합니다.")
         transaction = service.add(transaction_type, transaction_date, int(amount_text), category_name,
                                   memo, [tag.strip() for tag in tags_text.split(",") if tag.strip()])
@@ -101,7 +101,10 @@ def run(args: argparse.Namespace) -> int:
     elif args.command == "summary":
         result = service.summary(args.month, args.top)
         if result["count"] == 0:
-            print(f"{result['month']}: 데이터 없음")
+            print(f"{result['month']}: 거래 데이터 없음")
+            if result["budget"] is not None:
+                print(f"예산: {result['budget']}원 (사용률 0.0%)")
+            return 0
         print(f"월: {result['month']}")
         print(f"총 수입: {result['income']}원")
         print(f"총 지출: {result['expense']}원")
@@ -148,8 +151,13 @@ def run(args: argparse.Namespace) -> int:
         service.delete(args.id)
         print(f"[삭제 완료] id={args.id}")
     elif args.command == "import":
-        imported, skipped = service.import_csv(args.source)
+        imported, skipped, errors = service.import_csv(args.source)
         print(f"[완료] imported={imported}, skipped={skipped}")
+        for error in errors:
+            print(f"[건너뜀] {error}", file=sys.stderr)
+        # Partial imports are useful, but a skipped row means the import was not complete.
+        if skipped:
+            return 1
     elif args.command == "export":
         count = service.export_csv(args.out, month=args.month, start=args.start, end=args.end)
         print(f"[완료] {args.out} ({count} records)")
@@ -161,6 +169,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return run(args)
+    except KeyboardInterrupt:
+        print("[취소] 사용자가 작업을 중단했습니다.", file=sys.stderr)
+        return 130
+    except EOFError:
+        print("[입력 종료] 입력이 중단되어 작업을 취소했습니다.", file=sys.stderr)
+        return 1
     except (ValueError, OSError, KeyError) as exc:
         print(f"[오류] {exc}", file=sys.stderr)
         print("[힌트] 명령의 --help를 확인하고 입력값과 데이터 파일을 점검하세요.", file=sys.stderr)
