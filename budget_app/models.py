@@ -57,7 +57,7 @@ def validate_transaction_fields(
     if transaction_type not in {"income", "expense"}:
         raise ValueError("타입은 income 또는 expense만 가능합니다.")
     validate_date(transaction_date)
-    if isinstance(amount, bool) or amount <= 0:
+    if isinstance(amount, bool) or not isinstance(amount, int) or amount <= 0:
         raise ValueError("금액은 0보다 큰 정수여야 합니다.")
     if not category.strip():
         raise ValueError("카테고리를 입력하세요.")

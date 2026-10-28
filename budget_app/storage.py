@@ -17,6 +17,8 @@ class JsonlStore:
         self.transactions_path = self.data_dir / "transactions.jsonl"
         self.categories_path = self.data_dir / "categories.jsonl"
         self.budgets_path = self.data_dir / "budgets.jsonl"
+        # Keep a high-water mark so deleting the latest transaction cannot recycle its ID.
+        self.transaction_sequence_path = self.data_dir / "transaction_sequence.json"
         self.ensure_files()
 
     def ensure_files(self) -> None:
@@ -64,13 +66,30 @@ class JsonlStore:
         return result
 
     def next_transaction_id(self) -> str:
-        highest = 0
-        for transaction in self.iter_transactions():
+        """Reserve and persist the next ID before returning it."""
+        if self.transaction_sequence_path.exists():
             try:
-                highest = max(highest, int(transaction.id.removeprefix("TX-")))
-            except ValueError:
-                continue
-        return f"TX-{highest + 1:06d}"
+                state = json.loads(self.transaction_sequence_path.read_text(encoding="utf-8"))
+                highest = int(state["last_id"])
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"{self.transaction_sequence_path}의 ID 기록이 손상되었습니다. 파일을 확인하세요."
+                ) from exc
+        else:
+            # Upgrade existing data directories that predate the sequence file.
+            highest = 0
+            for transaction in self.iter_transactions():
+                try:
+                    highest = max(highest, int(transaction.id.removeprefix("TX-")))
+                except ValueError:
+                    continue
+
+        next_number = highest + 1
+        self._atomic_write(
+            self.transaction_sequence_path,
+            iter([{"last_id": next_number}]),
+        )
+        return f"TX-{next_number:06d}"
 
     def add_transaction(self, transaction: Transaction) -> None:
         self.append_json(self.transactions_path, transaction.to_dict())
@@ -91,7 +110,7 @@ class JsonlStore:
 
     @staticmethod
     def _atomic_write(path: Path, rows: Iterator[dict[str, Any]]) -> None:
-        temp_name = None
+        temp_name: str | None = None
         try:
             with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as file:
                 temp_name = file.name
@@ -100,7 +119,8 @@ class JsonlStore:
                 file.flush()
                 os.fsync(file.fileno())
             os.replace(temp_name, path)
-        except OSError:
+            temp_name = None
+        finally:
+            # Clean up after any failure, not only OSError.
             if temp_name and os.path.exists(temp_name):
                 os.unlink(temp_name)
-            raise

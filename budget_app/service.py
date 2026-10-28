@@ -1,9 +1,10 @@
 """Business rules for transactions, categories, budgets and CSV."""
-import csv
 import calendar
+import csv
 import heapq
-from collections import Counter, defaultdict
-from datetime import date
+import os
+import tempfile
+from collections import Counter
 from pathlib import Path
 from typing import Iterator
 
@@ -30,6 +31,7 @@ class BudgetService:
     def filtered(self, start: str | None = None, end: str | None = None,
                  category: str | None = None, transaction_type: str | None = None,
                  query: str | None = None, tag: str | None = None) -> Iterator[Transaction]:
+        # Validate before reading any records so invalid filters fail immediately.
         if start:
             validate_date(start)
         if end:
@@ -66,6 +68,7 @@ class BudgetService:
         )
 
     def search(self, **filters: str | None) -> list[Transaction]:
+        # Sorting newest-first requires retaining all matches in memory.
         return sorted(self.filtered(**filters), key=lambda item: (item.date, item.id), reverse=True)
 
     def update(self, transaction_id: str, **changes: object) -> Transaction:
@@ -151,8 +154,10 @@ class BudgetService:
             raise ValueError(f"{name} 카테고리는 거래에서 사용 중이므로 삭제할 수 없습니다.")
         self.store.replace_categories([item for item in self.store.categories() if item != name])
 
-    def import_csv(self, source: str) -> tuple[int, int]:
+    def import_csv(self, source: str) -> tuple[int, int, list[str]]:
+        """Import valid rows and return counts plus row-specific skip reasons."""
         imported = skipped = 0
+        errors: list[str] = []
         with Path(source).open("r", encoding="utf-8-sig", newline="") as file:
             reader = csv.DictReader(file)
             required = {"date", "type", "category", "amount"}
@@ -160,33 +165,59 @@ class BudgetService:
                 raise ValueError("CSV 필수 헤더는 date,type,category,amount 입니다.")
             for row_number, row in enumerate(reader, start=2):
                 try:
-                    amount_text = row.get("amount", "")
-                    if not amount_text or not amount_text.isdigit():
-                        raise ValueError("amount는 양수 정수여야 합니다.")
+                    amount_text = (row.get("amount") or "").strip()
+                    if not amount_text.isdigit() or int(amount_text) <= 0:
+                        raise ValueError("amount는 0보다 큰 정수여야 합니다.")
                     tags = [part.strip() for part in (row.get("tags") or "").split(",") if part.strip()]
-                    self.add(row.get("type", ""), row.get("date", ""), int(amount_text),
-                             row.get("category", ""), row.get("memo") or "", tags)
+                    self.add(row.get("type") or "", (row.get("date") or "").strip(), int(amount_text),
+                             (row.get("category") or "").strip(), row.get("memo") or "", tags)
                     imported += 1
-                except (ValueError, TypeError):
+                except (ValueError, TypeError) as exc:
                     skipped += 1
-        return imported, skipped
+                    errors.append(f"행 {row_number}: {exc}")
+        return imported, skipped, errors
 
     def export_csv(self, target: str, month: str | None = None, start: str | None = None,
                    end: str | None = None) -> int:
+        """Export atomically: an invalid filter or write error must not damage an existing file."""
         if not month and not (start and end):
             raise ValueError("export에는 --month 또는 --from과 --to를 함께 지정해야 합니다.")
+
         if month:
             month = validate_month(month)
             last_day = calendar.monthrange(int(month[:4]), int(month[5:7]))[1]
-            records = self.filtered(start=f"{month}-01", end=f"{month}-{last_day:02d}")
+            start, end = f"{month}-01", f"{month}-{last_day:02d}"
         else:
-            records = self.filtered(start=start, end=end)
+            # filtered() is a generator, so its validation would otherwise run only after
+            # the output file had already been opened. Validate eagerly before touching it.
+            if start:
+                validate_date(start)
+            if end:
+                validate_date(end)
+            if start and end and start > end:
+                raise ValueError("--from 날짜는 --to 날짜보다 늦을 수 없습니다.")
+
+        records = self.filtered(start=start, end=end)
+        target_path = Path(target)
+        temp_name: str | None = None
         count = 0
-        with Path(target).open("w", encoding="utf-8", newline="") as file:
-            writer = csv.DictWriter(file, fieldnames=["date", "type", "category", "amount", "memo", "tags"])
-            writer.writeheader()
-            for item in records:
-                writer.writerow({"date": item.date, "type": item.type, "category": item.category,
-                                 "amount": item.amount, "memo": item.memo, "tags": ",".join(item.tags)})
-                count += 1
+        try:
+            with tempfile.NamedTemporaryFile(
+                "w", encoding="utf-8", newline="", dir=target_path.parent,
+                prefix=f".{target_path.name}.", suffix=".tmp", delete=False
+            ) as file:
+                temp_name = file.name
+                writer = csv.DictWriter(file, fieldnames=["date", "type", "category", "amount", "memo", "tags"])
+                writer.writeheader()
+                for item in records:
+                    writer.writerow({"date": item.date, "type": item.type, "category": item.category,
+                                     "amount": item.amount, "memo": item.memo, "tags": ",".join(item.tags)})
+                    count += 1
+                file.flush()
+                os.fsync(file.fileno())
+            os.replace(temp_name, target_path)
+            temp_name = None
+        finally:
+            if temp_name and os.path.exists(temp_name):
+                os.unlink(temp_name)
         return count
