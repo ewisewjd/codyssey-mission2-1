@@ -24,6 +24,7 @@
 17. [Git·README·평가](17-git-readme-evaluation.md)
 18. [출력 포맷과 정렬](18-formatting-and-sorting.md)
 19. [보너스: 백업과 반복 거래](19-backup-and-recurring.md)
+20. [안전한 CRUD·CSV 입출력·Python 장식 문법](20-safe-crud-import-export-and-python-decorators.md) — 수정·삭제·export/import의 안전장치와 dataclass/static/class method/decorator
 
 ## 각 문서를 공부하는 방법
 
