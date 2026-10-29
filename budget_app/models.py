@@ -4,6 +4,7 @@ from datetime import date
 from typing import Any
 
 
+# dataclass는 필드에 맞춘 __init__와 __repr__ 등을 자동으로 만들어 준다.
 @dataclass
 class Transaction:
     id: str
@@ -14,6 +15,7 @@ class Transaction:
     memo: str = ""
     tags: list[str] = field(default_factory=list)
 
+    # 클래스 자체(cls)를 이용해 JSON 딕셔너리를 Transaction 객체로 복원한다.
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Transaction":
         return cls(
@@ -26,6 +28,7 @@ class Transaction:
             tags=[str(tag) for tag in data.get("tags", [])],
         )
 
+    # 저장하기 쉬운 딕셔너리로 변환한다. asdict는 dataclass 필드를 복사해 딕셔너리로 만든다.
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
@@ -51,6 +54,7 @@ def validate_month(value: str) -> str:
     return f"{year:04d}-{month:02d}"
 
 
+# 타입 힌트만으로 값이 검증되지는 않으므로, 실제 조건은 이 함수에서 검사한다.
 def validate_transaction_fields(
     transaction_type: str, transaction_date: str, amount: int, category: str
 ) -> None:
