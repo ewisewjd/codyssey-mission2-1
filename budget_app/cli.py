@@ -9,6 +9,7 @@ from .service import BudgetService
 from .storage import JsonlStore
 
 
+# 명령어와 옵션의 모양을 정의한다. 실제 업무 처리는 아래 run/service에 맡긴다.
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m budget_app", description="JSONL 기반 개인 가계부")
     parser.add_argument("--data-dir", default="data", help="데이터 디렉터리 (기본값: ./data)")
@@ -66,6 +67,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+# 목록이 비어 있는 경우와 거래가 있는 경우의 화면 출력을 한곳에서 처리한다.
 def print_transactions(items: list) -> None:
     if not items:
         print("거래 내역이 없습니다.")
@@ -74,11 +76,13 @@ def print_transactions(items: list) -> None:
         print(f"{item.id} | {item.date} | {item.type:<7} | {item.category} | {item.amount}원 | {item.memo} | 태그: {','.join(item.tags)}")
 
 
+# 데코레이터가 run 실행 시간을 선택적으로 측정한다. run 자체는 명령을 실행하고 종료 코드를 돌려준다.
 @timed("명령 실행")
 def run(args: argparse.Namespace) -> int:
     store = JsonlStore(args.data_dir)
     service = BudgetService(store)
 
+    # argparse가 고른 명령에 따라 해당 업무만 실행한다.
     if args.command == "add":
         categories = store.categories()
         print("등록된 카테고리:", ", ".join(categories))
@@ -137,6 +141,7 @@ def run(args: argparse.Namespace) -> int:
             name = args.name or input("삭제할 카테고리명: ").strip()
             service.remove_category(name)
             print(f"[삭제 완료] category={name}")
+    # None인 옵션은 사용자가 지정하지 않은 것이므로 변경 목록에 넣지 않는다.
     elif args.command == "update":
         changes = {}
         for key, value in (("date", args.date), ("type", args.transaction_type), ("amount", args.amount),
@@ -150,6 +155,7 @@ def run(args: argparse.Namespace) -> int:
     elif args.command == "delete":
         service.delete(args.id)
         print(f"[삭제 완료] id={args.id}")
+    # 일부 행이 실패해도 성공한 행은 반영하고, 건너뛴 행이 있으면 종료 코드를 1로 알린다.
     elif args.command == "import":
         imported, skipped, errors = service.import_csv(args.source)
         print(f"[완료] imported={imported}, skipped={skipped}")
@@ -164,10 +170,12 @@ def run(args: argparse.Namespace) -> int:
     return 0
 
 
+# 앱의 진입 함수: 인수를 해석하고, 사용자에게 보여 줄 대표적인 오류를 처리한다.
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
+        # 정상 실행 결과(0 또는 오류 코드)를 그대로 호출자에게 돌려준다.
         return run(args)
     except KeyboardInterrupt:
         print("[취소] 사용자가 작업을 중단했습니다.", file=sys.stderr)
