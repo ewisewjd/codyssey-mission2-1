@@ -1,0 +1,4 @@
+{"id": "TX-000001", "type": "income", "date": "2026-10-29", "amount": 15000, "category": "salary", "memo": "장학금", "tags": []}
+{"id": "TX-000002", "type": "expense", "date": "2026-10-29", "amount": 2000, "category": "food", "memo": "순대국", "tags": []}
+{"id": "TX-000003", "type": "income", "date": "2026-10-29", "amount": 15000, "category": "salary", "memo": "장학금", "tags": []}
+{"id": "TX-000004", "type": "expense", "date": "2026-10-29", "amount": 2000, "category": "food", "memo": "순대국", "tags": []}
