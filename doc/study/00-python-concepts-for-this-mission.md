@@ -110,7 +110,10 @@ class Transaction:
     memo: str = ""
 ```
 
-클래스는 데이터와 관련 동작을 묶는 설계도다. 인스턴스는 그 설계도로 만든 실제 객체다. `@dataclass`는 초기화 함수 등 반복 코드를 자동 생성해 준다.
+클래스는 데이터와 관련 동작을 묶는 설계도다. 인스턴스는 그 설계도로 만든 실제 객체다. `@dataclass`는 초기화 함수 등 반복 코드를 자동 생성해 준다. `field(default_factory=list)`는 객체마다 새 리스트를 만든다. 타입 힌트는 자동 검증기가 아니다.
+
+- `@classmethod`는 첫 인수로 클래스 `cls`를 자동 전달한다. `Transaction.from_dict()`가 이 방식이다.
+- `@staticmethod`는 `self`나 `cls`를 자동 전달하지 않는다. `JsonlStore.append_json()`과 `_atomic_write()`처럼 특정 인스턴스 상태가 필요 없는 함수에 쓸 수 있다.
 
 ## 8. 데코레이터
 
@@ -136,6 +139,7 @@ def run():
 | JSONL, Path, 제너레이터, 임시 파일 교체 | `budget_app/storage.py` |
 | 함수, 필터링, 정렬, 집계, CSV | `budget_app/service.py` |
 | 데코레이터 | `budget_app/decorators.py` |
+| `@staticmethod` / `@classmethod` | `budget_app/storage.py`, `budget_app/models.py` |
 | 예외와 종료 코드 | `budget_app/cli.py` |
 
 ## 셀프 체크
