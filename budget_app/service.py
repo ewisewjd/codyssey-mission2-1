@@ -12,6 +12,7 @@ from .models import Transaction, validate_date, validate_month, validate_transac
 from .storage import JsonlStore
 
 
+# 업무 규칙 계층: 입력 검증, 거래 규칙, CSV 정책을 저장소 세부 구현과 분리한다.
 class BudgetService:
     def __init__(self, store: JsonlStore) -> None:
         self.store = store
@@ -71,6 +72,8 @@ class BudgetService:
         # Sorting newest-first requires retaining all matches in memory.
         return sorted(self.filtered(**filters), key=lambda item: (item.date, item.id), reverse=True)
 
+    # 수정할 거래만 바꾼 새 목록을 만든 뒤, 전체 파일을 안전 교체한다.
+    # 검증 중 오류가 나면 replace_transactions까지 도달하지 않으므로 원본 파일을 건드리지 않는다.
     def update(self, transaction_id: str, **changes: object) -> Transaction:
         allowed = {"date", "type", "amount", "category", "memo", "tags"}
         if not changes or not set(changes).issubset(allowed):
@@ -99,9 +102,11 @@ class BudgetService:
                 rows.append(item)
         if found is None:
             raise ValueError(f"거래 ID를 찾을 수 없습니다: {transaction_id}")
+        # 모든 검증과 대상 존재 확인이 끝난 뒤에만 파일 교체를 요청한다.
         self.store.replace_transactions(iter(rows))
         return found
 
+    # 삭제도 원본을 직접 줄 단위 수정하지 않고, 남길 거래를 모아 파일 전체를 교체한다.
     def delete(self, transaction_id: str) -> None:
         rows: list[Transaction] = []
         found = False
@@ -154,6 +159,7 @@ class BudgetService:
             raise ValueError(f"{name} 카테고리는 거래에서 사용 중이므로 삭제할 수 없습니다.")
         self.store.replace_categories([item for item in self.store.categories() if item != name])
 
+    # CSV를 행 단위로 읽는다. 한 행이 잘못되어도 전체 작업을 중단하지 않고 그 행을 건너뛴다.
     def import_csv(self, source: str) -> tuple[int, int, list[str]]:
         """Import valid rows and return counts plus row-specific skip reasons."""
         imported = skipped = 0
@@ -163,6 +169,7 @@ class BudgetService:
             required = {"date", "type", "category", "amount"}
             if not required.issubset(set(reader.fieldnames or [])):
                 raise ValueError("CSV 필수 헤더는 date,type,category,amount 입니다.")
+            # 헤더가 1행이므로 데이터 행 번호는 2부터 센다.
             for row_number, row in enumerate(reader, start=2):
                 try:
                     amount_text = (row.get("amount") or "").strip()
@@ -177,6 +184,7 @@ class BudgetService:
                     errors.append(f"행 {row_number}: {exc}")
         return imported, skipped, errors
 
+    # 기존 출력 파일 보호: 필터를 먼저 검증하고 임시 CSV를 완성한 뒤 마지막에 교체한다.
     def export_csv(self, target: str, month: str | None = None, start: str | None = None,
                    end: str | None = None) -> int:
         """Export atomically: an invalid filter or write error must not damage an existing file."""
@@ -215,8 +223,8 @@ class BudgetService:
                     count += 1
                 file.flush()
                 os.fsync(file.fileno())
-            os.replace(temp_name, target_path)
-            temp_name = None
+            os.replace(temp_name, target_path)  # 성공한 임시 파일만 최종 경로에 반영한다.
+            temp_name = None  # finally에서 이미 교체한 임시 파일을 지우지 않도록 표시한다.
         finally:
             if temp_name and os.path.exists(temp_name):
                 os.unlink(temp_name)
