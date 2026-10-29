@@ -11,6 +11,7 @@ from .models import Transaction
 DEFAULT_CATEGORIES = ["food", "transport", "rent", "salary", "shopping", "health", "etc"]
 
 
+# 저장소(Repository): JSONL 파일을 읽고 쓰는 책임을 CLI/서비스에서 분리한다.
 class JsonlStore:
     def __init__(self, data_dir: str = "data") -> None:
         self.data_dir = Path(data_dir)
@@ -21,6 +22,7 @@ class JsonlStore:
         self.transaction_sequence_path = self.data_dir / "transaction_sequence.json"
         self.ensure_files()
 
+    # 데이터 폴더와 필수 파일이 없으면 만들고, 카테고리 파일이 비어 있으면 기본값을 채운다.
     def ensure_files(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         for path in (self.transactions_path, self.categories_path, self.budgets_path):
@@ -30,11 +32,14 @@ class JsonlStore:
             for name in DEFAULT_CATEGORIES:
                 self.append_json(self.categories_path, {"name": name})
 
+    # 인스턴스의 self를 쓰지 않는 파일 유틸리티이므로 @staticmethod로 선언한다.
     @staticmethod
     def append_json(path: Path, data: dict[str, Any]) -> None:
         with path.open("a", encoding="utf-8") as file:
             file.write(json.dumps(data, ensure_ascii=False) + "\n")
 
+    # 파일을 한 번에 통째로 읽지 않고 한 줄씩 JSON 객체로 바꾸어 제공한다(yield).
+    # 경로만 사용하고 self 상태에는 의존하지 않아 정적 메서드로 둔다.
     @staticmethod
     def iter_json(path: Path) -> Iterator[dict[str, Any]]:
         if not path.exists():
@@ -65,6 +70,7 @@ class JsonlStore:
                 result[str(row["month"])] = int(row["amount"])
         return result
 
+    # 마지막으로 예약한 번호를 별도 파일에 보관해, 최신 거래 삭제 후에도 ID를 재사용하지 않는다.
     def next_transaction_id(self) -> str:
         """Reserve and persist the next ID before returning it."""
         if self.transaction_sequence_path.exists():
@@ -108,6 +114,8 @@ class JsonlStore:
         budgets[month] = amount
         self._atomic_write(self.budgets_path, ({"month": m, "amount": a} for m, a in sorted(budgets.items())))
 
+    # 원본을 바로 덮어쓰지 않고 같은 폴더의 임시 파일을 완성한 다음 교체한다.
+    # self 상태를 쓰지 않는 공통 쓰기 도구라 @staticmethod로 선언한다.
     @staticmethod
     def _atomic_write(path: Path, rows: Iterator[dict[str, Any]]) -> None:
         temp_name: str | None = None
@@ -116,9 +124,9 @@ class JsonlStore:
                 temp_name = file.name
                 for row in rows:
                     file.write(json.dumps(row, ensure_ascii=False) + "\n")
-                file.flush()
-                os.fsync(file.fileno())
-            os.replace(temp_name, path)
+                file.flush()  # Python 버퍼에 남은 내용을 운영체제로 밀어낸다.
+                os.fsync(file.fileno())  # 가능한 범위에서 저장 장치에 기록되도록 요청한다.
+            os.replace(temp_name, path)  # 같은 파일 시스템 안에서 완성된 파일로 교체한다.
             temp_name = None
         finally:
             # Clean up after any failure, not only OSError.
